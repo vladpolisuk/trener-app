@@ -174,14 +174,21 @@ function render(){
 function renderToday(){
   const now = new Date();
   const dstr = todayStr(now);
-  const dk = dayKeyFor(now);
+  const scheduled = dayKeyFor(now);
+  const overridden = state.dayOverride && state.dayOverride.date===dstr;
+  const dk = overridden ? state.dayOverride.dayKey : scheduled;
   const dl = deloadInfo();
   const dayObj = (dk!=='rest' && dk!=='cardio') ? state.program[dk] : null;
   let html = '';
+  const dayOptions = ['A','B','C','cardio','rest'].map(v=>{
+    const label = (v===scheduled ? DAY_LABELS[v]+' (по расписанию)' : DAY_LABELS[v]);
+    return `<option value="${v}" ${dk===v?'selected':''}>${label}</option>`;
+  }).join('');
   html += `<div class="topbar">
     <div class="datebig num">${fmtDateBig(now)}</div>
     <div class="daysub">${WD_NAMES[weekday(now)]}</div>
     <div class="badge ${dk==='rest'?'rest':dk==='cardio'?'cardio':dk.toLowerCase()}">${dk==='rest'?'Отдых':dk==='cardio'?'Кардио день':escHtml(dayObj.title)+' · '+escHtml(dayObj.sub)}</div>
+    <div class="dayswitch"><label>Тренировка сегодня</label><select onchange="setDayOverride(this.value)">${dayOptions}</select></div>
   </div>`;
 
   if(dl.due){
@@ -288,6 +295,15 @@ function saveSession(dk){
 
 function markDeload(){
   state.lastDeload = todayStr();
+  saveState();
+  render();
+}
+
+function setDayOverride(val){
+  const dstr = todayStr();
+  const scheduled = dayKeyFor(new Date());
+  if(val === scheduled) delete state.dayOverride;
+  else state.dayOverride = {date: dstr, dayKey: val};
   saveState();
   render();
 }

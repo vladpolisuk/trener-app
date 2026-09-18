@@ -32,6 +32,9 @@ h1,h2,h3{font-family:'Playfair Display',Georgia,serif;font-weight:700;margin:0;}
 .badge.a{background:var(--a-bg);color:var(--a);} .badge.b{background:var(--b-bg);color:var(--b);}
 .badge.c{background:var(--c-bg);color:var(--c);} .badge.cardio{background:var(--cardio-bg);color:var(--cardio);}
 .badge.rest{background:var(--rest-bg);color:var(--rest);}
+.dayswitch{margin-top:10px;}
+.dayswitch label{font-size:12px;color:var(--ink-dim);display:block;margin-bottom:4px;}
+.dayswitch select{width:auto;min-width:200px;padding:7px 10px;font-size:14px;}
 
 /* deload banner */
 .banner{margin:0 16px 14px;padding:12px 14px;border-radius:10px;background:var(--cardio-bg);color:var(--warn);
