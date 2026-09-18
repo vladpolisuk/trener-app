@@ -99,6 +99,19 @@ select,input[type=number],input[type=date],input[type=text]{width:100%;padding:9
 .btn.danger{color:var(--danger);border-color:var(--danger);background:transparent;}
 .hint{font-size:12.5px;color:var(--ink-dim);margin-top:8px;line-height:1.5;}
 
+/* body: КБЖУ / вода / FFMI */
+.metric-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;font-size:14px;}
+.metric-row span{color:var(--ink-dim);}
+.metric-row b{font-size:16px;}
+.pbar{height:8px;border-radius:4px;background:var(--surface-2);overflow:hidden;margin-top:6px;}
+.pbar-fill{height:100%;background:var(--ok);border-radius:4px;}
+.pbar-fill.over{background:var(--danger);}
+.targets-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:4px;}
+.targets-grid input{padding:8px 6px;font-size:13px;text-align:center;}
+.foodrow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--line);gap:8px;}
+.foodrow:first-child{border-top:0;}
+.food-add{margin-top:14px;}
+
 /* program editor */
 .progtabs{display:flex;margin-bottom:4px;flex-wrap:wrap;gap:6px;}
 .ptab{padding:6px 16px;border-radius:8px;border:1px solid var(--line);background:var(--surface-2);

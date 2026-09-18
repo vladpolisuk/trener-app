@@ -58,7 +58,12 @@ function defaultState(){
     deloadWeeks: 7,
     sessions: [], // {id,date,dayKey,readiness:{sleep,energy,soreness},exercises:[{exId,sets:[{a,b}]}]}
     theme: 'auto',
-    program: cloneProgram(DEFAULT_PROGRAM)
+    program: cloneProgram(DEFAULT_PROGRAM),
+    body: {
+      targets: {kcal:null, protein:null, fat:null, carb:null}, // дневные цели КБЖУ, задаются вручную
+      log: [], // {date, weightKg, heightCm, bodyFatPct, ffmi} — замеры тела, апдейтятся в любой момент
+      nutrition: {} // {'YYYY-MM-DD': {entries:[{id,name,kcal,protein,fat,carb}], waterMl}}
+    }
   };
 }
 let state = loadState();
@@ -168,6 +173,7 @@ function render(){
   if(activeTab==='today') return renderToday();
   if(activeTab==='week') return renderWeek();
   if(activeTab==='history') return renderHistory();
+  if(activeTab==='body') return renderBody();
   if(activeTab==='settings') return renderSettings();
 }
 
@@ -326,8 +332,59 @@ function renderWeek(){
   app.innerHTML = html;
 }
 
+/* records (PR) — computed from session history, no manual entry */
+function computeRecords(){
+  const recs = {};
+  state.sessions.forEach(s=>{
+    const prog = state.program[s.dayKey];
+    s.exercises.forEach(e=>{
+      const exo = prog ? prog.exercises.find(x=>x.id===e.exId) : null;
+      const name = exo ? exo.name : e.exId;
+      const cat = exo ? exo.cat : 'w';
+      e.sets.forEach(set=>{
+        if(set.b==null || set.b==='') return;
+        const b = Number(set.b);
+        if(!recs[e.exId]) recs[e.exId] = {name, cat};
+        const r = recs[e.exId];
+        r.name = name;
+        if(cat==='t'){
+          if(r.bestTime==null || b>r.bestTime) r.bestTime = b;
+        } else {
+          const a = Number(set.a)||0;
+          if(r.bestWeight==null || a>r.bestWeight){ r.bestWeight=a; r.bestReps=b; }
+          if(cat==='w' && a>0){
+            const oneRM = round(a*(1+b/30)); // формула Эпли
+            if(r.best1RM==null || oneRM>r.best1RM) r.best1RM = oneRM;
+          }
+        }
+      });
+    });
+  });
+  return recs;
+}
+
+function recordsCard(){
+  const recs = computeRecords();
+  const ids = Object.keys(recs);
+  if(!ids.length) return '';
+  let html = `<div class="card"><h3>Рекорды</h3><p class="hint">Лучший результат за всё время по каждому упражнению — считается автоматически из истории.</p>`;
+  ids.forEach(id=>{
+    const r = recs[id];
+    let line;
+    if(r.cat==='t') line = `${r.bestTime} сек`;
+    else {
+      line = `${r.bestWeight} ${UNIT[r.cat]||'кг'} × ${r.bestReps} ${REPUNIT[r.cat]}`;
+      if(r.best1RM) line += ` · ~1ПМ ${r.best1RM} кг`;
+    }
+    html += `<div class="weekitem"><span>${escHtml(r.name)}</span><span class="r">${line}</span></div>`;
+  });
+  html += `</div>`;
+  return html;
+}
+
 function renderHistory(){
   let html = `<div class="topbar"><h1>История</h1><div class="daysub">${state.sessions.length} тренировок записано</div></div>`;
+  html += recordsCard();
   if(!state.sessions.length){
     html += `<div class="empty">Пока пусто — заполни и сохрани сегодняшнюю тренировку на вкладке «Сегодня».</div>`;
   } else {
@@ -355,6 +412,188 @@ function delSession(id){
   if(!confirm('Удалить эту тренировку из истории?')) return;
   state.sessions = state.sessions.filter(s=>s.id!==id);
   saveState(); render();
+}
+
+/* ================= BODY: КБЖУ / вода / FFMI ================= */
+function calcFFMI(weightKg, heightCm, bodyFatPct){
+  const h = heightCm/100;
+  const lean = weightKg * (1 - bodyFatPct/100);
+  return round(lean/(h*h) + 6.1*(1.8-h));
+}
+
+function latestBodyEntry(){
+  if(!state.body.log.length) return null;
+  return [...state.body.log].sort((a,b)=> a.date<b.date?1:-1)[0];
+}
+
+function getNutritionDay(dstr){
+  return state.body.nutrition[dstr] || {entries:[], waterMl:0};
+}
+function ensureNutritionDay(dstr){
+  if(!state.body.nutrition[dstr]) state.body.nutrition[dstr] = {entries:[], waterMl:0};
+  return state.body.nutrition[dstr];
+}
+
+function renderBody(){
+  const dstr = todayStr();
+  let html = `<div class="topbar"><h1>Тело</h1><div class="daysub">КБЖУ, вода, состав тела</div></div>`;
+  html += bodyCompositionCard();
+  html += nutritionCard(dstr);
+  html += waterCard(dstr);
+  app.innerHTML = html;
+}
+
+function bodyCompositionCard(){
+  const latest = latestBodyEntry();
+  let html = `<div class="card"><h3>Вес и состав тела</h3>`;
+  if(latest){
+    html += `<div class="metric-row"><span>FFMI</span><b class="num">${latest.ffmi}</b></div>
+      <p class="hint">Последний замер: ${fmtDateBig(new Date(latest.date+'T00:00:00'))} — ${latest.weightKg} кг, ${latest.heightCm} см, ${latest.bodyFatPct}% жира.</p>`;
+  } else {
+    html += `<p class="hint">Пока нет ни одного замера — добавь первый, чтобы считать FFMI и цель по воде.</p>`;
+  }
+  html += `<div class="field"><label>Вес (кг)</label><input type="number" inputmode="decimal" step="0.1" id="bf-weight" value="${latest?latest.weightKg:''}"></div>
+    <div class="field"><label>Рост (см)</label><input type="number" inputmode="decimal" step="0.5" id="bf-height" value="${latest?latest.heightCm:''}"></div>
+    <div class="field"><label>% жира</label><input type="number" inputmode="decimal" step="0.1" id="bf-fat" value="${latest?latest.bodyFatPct:''}"></div>
+    <div class="btnline"><button class="btn" onclick="addBodyEntry()">Сохранить замер на сегодня</button></div>`;
+  if(state.body.log.length){
+    html += `<div class="pexlist">`;
+    [...state.body.log].sort((a,b)=> a.date<b.date?1:-1).forEach(e=>{
+      html += `<div class="weekitem"><span>${fmtDateBig(new Date(e.date+'T00:00:00'))} · ${e.weightKg} кг, ${e.bodyFatPct}%</span>
+        <span class="r num">FFMI ${e.ffmi} <button class="hist-del" onclick="deleteBodyEntry('${e.date}')">✕</button></span></div>`;
+    });
+    html += `</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function addBodyEntry(){
+  const w = Number(document.getElementById('bf-weight').value);
+  const h = Number(document.getElementById('bf-height').value);
+  const bf = Number(document.getElementById('bf-fat').value);
+  if(!(w>0) || !(h>0) || !(bf>=0 && bf<100)){ alert('Заполни вес, рост и % жира корректными числами.'); return; }
+  const dstr = todayStr();
+  const ffmi = calcFFMI(w,h,bf);
+  const idx = state.body.log.findIndex(e=>e.date===dstr);
+  const entry = {date:dstr, weightKg:w, heightCm:h, bodyFatPct:bf, ffmi};
+  if(idx>=0) state.body.log[idx] = entry; else state.body.log.push(entry);
+  saveState();
+  render();
+}
+
+function deleteBodyEntry(date){
+  if(!confirm('Удалить этот замер?')) return;
+  state.body.log = state.body.log.filter(e=>e.date!==date);
+  saveState();
+  render();
+}
+
+function macroProgressRow(label, actual, target, unit){
+  const a = round(actual);
+  const pct = target ? Math.min(100, Math.round(actual/target*100)) : 0;
+  const over = target!=null && actual>target;
+  return `<div class="metric-row"><span>${label}</span><b class="num">${a}${target!=null?` / ${target}`:''} ${unit}</b></div>
+    ${target!=null?`<div class="pbar"><div class="pbar-fill${over?' over':''}" style="width:${pct}%"></div></div>`:''}`;
+}
+
+function nutritionCard(dstr){
+  const day = getNutritionDay(dstr);
+  const t = state.body.targets;
+  const totals = day.entries.reduce((acc,e)=>({
+    kcal:acc.kcal+(Number(e.kcal)||0), protein:acc.protein+(Number(e.protein)||0),
+    fat:acc.fat+(Number(e.fat)||0), carb:acc.carb+(Number(e.carb)||0)
+  }), {kcal:0,protein:0,fat:0,carb:0});
+
+  let html = `<div class="card"><h3>КБЖУ сегодня</h3>`;
+  html += `<div class="field"><label>Цель: ккал / белки / жиры / углеводы (г)</label>
+    <div class="targets-grid">
+      <input type="number" inputmode="numeric" placeholder="ккал" value="${t.kcal??''}" onchange="setTarget('kcal',this.value)">
+      <input type="number" inputmode="numeric" placeholder="Б" value="${t.protein??''}" onchange="setTarget('protein',this.value)">
+      <input type="number" inputmode="numeric" placeholder="Ж" value="${t.fat??''}" onchange="setTarget('fat',this.value)">
+      <input type="number" inputmode="numeric" placeholder="У" value="${t.carb??''}" onchange="setTarget('carb',this.value)">
+    </div>
+  </div>`;
+
+  html += macroProgressRow('Калории', totals.kcal, t.kcal, 'ккал');
+  html += macroProgressRow('Белки', totals.protein, t.protein, 'г');
+  html += macroProgressRow('Жиры', totals.fat, t.fat, 'г');
+  html += macroProgressRow('Углеводы', totals.carb, t.carb, 'г');
+
+  if(day.entries.length){
+    html += `<div class="pexlist">`;
+    day.entries.forEach(e=>{
+      html += `<div class="foodrow"><div><b>${escHtml(e.name)}</b><div class="hint" style="margin-top:2px">${e.kcal} ккал · Б${e.protein} Ж${e.fat} У${e.carb}</div></div>
+        <button class="hist-del" onclick="deleteFoodEntry('${e.id}')">✕</button></div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<div class="pex-fields food-add">
+    <label>Название<input type="text" id="food-name" placeholder="Например, овсянка"></label>
+    <label>Ккал<input type="number" inputmode="numeric" id="food-kcal"></label>
+    <label>Белки, г<input type="number" inputmode="decimal" id="food-protein"></label>
+    <label>Жиры, г<input type="number" inputmode="decimal" id="food-fat"></label>
+    <label>Углеводы, г<input type="number" inputmode="decimal" id="food-carb"></label>
+  </div>
+  <button class="btn add-ex-btn" onclick="addFoodEntry()">+ Добавить приём пищи</button>`;
+
+  html += `</div>`;
+  return html;
+}
+
+function setTarget(field, val){
+  state.body.targets[field] = val==='' ? null : Number(val);
+  saveState();
+  render();
+}
+
+function addFoodEntry(){
+  const name = document.getElementById('food-name').value.trim();
+  const kcal = Number(document.getElementById('food-kcal').value)||0;
+  const protein = Number(document.getElementById('food-protein').value)||0;
+  const fat = Number(document.getElementById('food-fat').value)||0;
+  const carb = Number(document.getElementById('food-carb').value)||0;
+  if(!name){ alert('Укажи название приёма пищи.'); return; }
+  const dstr = todayStr();
+  ensureNutritionDay(dstr).entries.push({id:'f'+Date.now(), name, kcal, protein, fat, carb});
+  saveState();
+  render();
+}
+
+function deleteFoodEntry(id){
+  const day = state.body.nutrition[todayStr()];
+  if(!day) return;
+  day.entries = day.entries.filter(e=>e.id!==id);
+  saveState();
+  render();
+}
+
+function waterCard(dstr){
+  const day = getNutritionDay(dstr);
+  const latest = latestBodyEntry();
+  const target = latest ? Math.round(latest.weightKg*35) : null;
+  const pct = target ? Math.min(100, Math.round(day.waterMl/target*100)) : 0;
+  let html = `<div class="card"><h3>Вода</h3>`;
+  if(!target){
+    html += `<p class="hint">Добавь вес в разделе «Вес и состав тела» — тогда посчитаю цель (35 мл × вес).</p>`;
+  }
+  html += `<div class="metric-row"><span>Сегодня</span><b class="num">${day.waterMl}${target!=null?` / ${target}`:''} мл</b></div>`;
+  if(target) html += `<div class="pbar"><div class="pbar-fill${day.waterMl>target?' over':''}" style="width:${pct}%"></div></div>`;
+  html += `<div class="btnline"><button class="btn" onclick="addWater(500)">+500 мл</button><button class="btn" onclick="addWater(250)">+250 мл</button><button class="btn danger" onclick="resetWater()">Сбросить</button></div>`;
+  html += `</div>`;
+  return html;
+}
+
+function addWater(ml){
+  ensureNutritionDay(todayStr()).waterMl += ml;
+  saveState();
+  render();
+}
+function resetWater(){
+  ensureNutritionDay(todayStr()).waterMl = 0;
+  saveState();
+  render();
 }
 
 function renderSettings(){
