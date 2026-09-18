@@ -12,13 +12,15 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="app" class="wrap"></div>
 <nav class="nav" id="nav">
-  <button data-tab="today"><span class="ic">●</span>Сегодня</button>
-  <button data-tab="week"><span class="ic">▤</span>Неделя</button>
-  <button data-tab="history"><span class="ic">◷</span>История</button>
-  <button data-tab="settings"><span class="ic">⚙</span>Настройки</button>
+  <div class="nav-inner">
+    <button data-tab="today"><span class="ic">●</span>Сегодня</button>
+    <button data-tab="week"><span class="ic">▤</span>Неделя</button>
+    <button data-tab="history"><span class="ic">◷</span>История</button>
+    <button data-tab="settings"><span class="ic">⚙</span>Настройки</button>
+  </div>
 </nav>
+<div id="app" class="wrap"></div>
 <script src="app.js" defer></script>
 </body>
 </html>
