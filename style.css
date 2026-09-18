@@ -17,7 +17,7 @@
   --a-bg:#233238; --b-bg:#33241F; --c-bg:#282C1E; --cardio-bg:#332A1A; --rest-bg:#2A2B2E;
 }
 *{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,sans-serif;
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Onest',system-ui,-apple-system,sans-serif;
   -webkit-font-smoothing:antialiased;padding-bottom:24px;}
 .wrap{max-width:640px;margin:0 auto;padding:0 16px;}
 h1,h2,h3{font-family:'Barlow Condensed',system-ui,sans-serif;font-weight:700;margin:0;}
@@ -61,7 +61,7 @@ h1,h2,h3{font-family:'Barlow Condensed',system-ui,sans-serif;font-weight:700;mar
 .setrow{display:flex;align-items:center;gap:8px;}
 .setrow .idx{width:16px;font-size:12px;color:var(--ink-dim);}
 .setrow input{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:7px;
-  padding:8px 8px;font-size:15px;color:var(--ink);font-family:'Inter';}
+  padding:8px 8px;font-size:15px;color:var(--ink);font-family:'Onest';}
 .setrow .u{font-size:12px;color:var(--ink-dim);width:30px;}
 .fail-flag{margin-top:8px;font-size:12.5px;color:var(--danger);}
 
@@ -87,12 +87,12 @@ h1,h2,h3{font-family:'Barlow Condensed',system-ui,sans-serif;font-weight:700;mar
 .field{margin-top:12px;}
 .field label{font-size:13px;color:var(--ink-dim);display:block;margin-bottom:5px;}
 select,input[type=number],input[type=date],input[type=text]{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);
-  background:var(--surface-2);color:var(--ink);font-size:15px;font-family:'Inter';}
+  background:var(--surface-2);color:var(--ink);font-size:15px;font-family:'Onest';}
 .sched-grid{display:grid;grid-template-columns:34px 1fr;gap:8px;align-items:center;margin-top:8px;}
 .sched-grid span{font-size:13px;color:var(--ink-dim);}
 .btnline{margin-top:14px;display:flex;gap:8px;}
 .btn{flex:1;padding:11px;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);
-  color:var(--ink);font-size:14px;font-weight:600;font-family:'Inter';}
+  color:var(--ink);font-size:14px;font-weight:600;font-family:'Onest';}
 .btn.danger{color:var(--danger);border-color:var(--danger);background:transparent;}
 .hint{font-size:12.5px;color:var(--ink-dim);margin-top:8px;line-height:1.5;}
 
@@ -121,7 +121,7 @@ select,input[type=number],input[type=date],input[type=text]{width:100%;padding:9
 .nav{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);z-index:10;}
 .nav-inner{max-width:640px;margin:0 auto;padding:0 16px;display:flex;}
 .nav button{flex:1;background:none;border:0;border-bottom:2px solid transparent;color:var(--ink-dim);
-  font-family:'Inter';font-size:12px;display:flex;flex-direction:column;align-items:center;gap:3px;
+  font-family:'Onest';font-size:12px;display:flex;flex-direction:column;align-items:center;gap:3px;
   padding:10px 4px 8px;}
 .nav button.on{color:var(--ink);font-weight:600;border-bottom-color:var(--ink);}
 .nav .ic{font-size:17px;}
