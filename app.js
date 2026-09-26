@@ -63,22 +63,56 @@ function defaultState(){
       targets: {kcal:null, protein:null, fat:null, carb:null}, // дневные цели КБЖУ, задаются вручную
       log: [], // {date, weightKg, heightCm, bodyFatPct, ffmi} — замеры тела, апдейтятся в любой момент
       nutrition: {} // {'YYYY-MM-DD': {entries:[{id,name,kcal,protein,fat,carb}], waterMl}}
-    }
+    },
+    updatedAt: 0 // ms epoch последнего изменения данных, нужен для синхронизации (sync.js)
   };
 }
 let state = loadState();
+function normalizeState(parsed){
+  const st = Object.assign(defaultState(), parsed);
+  if(parsed && parsed.updatedAt==null) st.updatedAt = Date.now();
+  return st;
+}
 function loadState(){
   try{
     const raw = localStorage.getItem(STORE_KEY);
     if(!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    return Object.assign(defaultState(), parsed);
+    return normalizeState(JSON.parse(raw));
   }catch(e){ return defaultState(); }
 }
-function saveState(){
+function saveState(opts){
+  if(!opts || !opts.silent) state.updatedAt = Math.max(Date.now(), (state.updatedAt||0)+1);
   try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+  if(!opts || !opts.silent) Sync.schedulePush();
 }
-function todayStr(d){ d = d || new Date(); return d.toISOString().slice(0,10); }
+function todayStr(d){
+  d = d || new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+/* ---- черновики: несохранённый ввод, переживает перезагрузку, не синхронизируется ---- */
+const DRAFT_KEY = 'fb_tracker_drafts';
+let drafts = loadDrafts();
+function loadDrafts(){
+  try{ return JSON.parse(localStorage.getItem(DRAFT_KEY)) || {}; }catch(e){ return {}; }
+}
+function saveDrafts(){
+  try{ localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts)); }catch(e){}
+}
+function formVal(key, fallback){
+  const f = drafts.forms;
+  return f && f[key]!==undefined ? f[key] : fallback;
+}
+function setFormVal(key, val){
+  if(!drafts.forms) drafts.forms = {};
+  drafts.forms[key] = val;
+  saveDrafts();
+}
+function clearFormVals(prefix){
+  if(!drafts.forms) return;
+  Object.keys(drafts.forms).forEach(k=>{ if(k.startsWith(prefix)) delete drafts.forms[k]; });
+  saveDrafts();
+}
 
 /* ================= HELPERS ================= */
 const WD_NAMES = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
@@ -164,11 +198,19 @@ function deloadInfo(){
 
 /* ================= RENDER ================= */
 const app = document.getElementById('app');
-let activeTab = 'today';
-let readinessDraft = {sleep:null, energy:null, soreness:null};
+const TABS = ['today','week','history','body','settings'];
+let activeTab = TABS.includes(drafts.tab) ? drafts.tab : 'today';
 let progEditorDay = 'A';
 
+function setTab(tab){
+  activeTab = tab;
+  drafts.tab = tab;
+  saveDrafts();
+  render();
+}
+
 function render(){
+  flushAutosave();
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on', b.dataset.tab===activeTab));
   if(activeTab==='today') return renderToday();
   if(activeTab==='week') return renderWeek();
@@ -177,12 +219,25 @@ function render(){
   if(activeTab==='settings') return renderSettings();
 }
 
+function todayDayKey(){
+  const now = new Date();
+  const ov = state.dayOverride;
+  return ov && ov.date===todayStr(now) ? ov.dayKey : dayKeyFor(now);
+}
+
+function todayReadiness(){
+  const dstr = todayStr();
+  const already = state.sessions.find(s=>s.date===dstr);
+  if(already) return already.readiness;
+  const d = drafts.readiness;
+  return d && d.date===dstr ? d : {sleep:null, energy:null, soreness:null};
+}
+
 function renderToday(){
   const now = new Date();
   const dstr = todayStr(now);
   const scheduled = dayKeyFor(now);
-  const overridden = state.dayOverride && state.dayOverride.date===dstr;
-  const dk = overridden ? state.dayOverride.dayKey : scheduled;
+  const dk = todayDayKey();
   const dl = deloadInfo();
   const dayObj = (dk!=='rest' && dk!=='cardio') ? state.program[dk] : null;
   let html = '';
@@ -208,20 +263,19 @@ function renderToday(){
     html += `<div class="card"><h3>Кардио</h3><p class="hint">20–25 мин HIIT (30 сек максимум / 90 сек легко × 8–10) или 30–40 мин низкоинтенсивного кардио в пульсе 120–140. Не заменяй этим силовые дни.</p></div>`;
   } else {
     const prog = dayObj;
-    // readiness card
     const already = state.sessions.find(s=>s.date===dstr);
-    const r = already ? already.readiness : readinessDraft;
+    const r = todayReadiness();
     html += `<div class="card"><h3>Самочувствие сегодня</h3>
-      ${readinessRow('sleep','Сон', r.sleep)}
-      ${readinessRow('energy','Энергия', r.energy)}
-      ${readinessRow('soreness','Свежесть мышц', r.soreness)}
+      ${readinessRow('sleep','Сон', r.sleep, 'setReadiness')}
+      ${readinessRow('energy','Энергия', r.energy, 'setReadiness')}
+      ${readinessRow('soreness','Свежесть мышц', r.soreness, 'setReadiness')}
       <p class="hint">Влияет на рекомендации по весу ниже. Необязательно, но помогает не тянуть тяжёлое в плохой день.</p>
     </div>`;
 
-    html += `<div class="card"><div class="daycard-title"><h3>${escHtml(prog.title)}</h3></div>`;
+    html += `<div class="card" id="today-card" data-dk="${dk}"><div class="daycard-title"><h3>${escHtml(prog.title)}</h3></div>`;
     prog.exercises.forEach((exo,i)=>{
       const sug = getSuggestion(exo, dstr, r);
-      const savedSets = already ? (already.exercises.find(e=>e.exId===exo.id)||{}).sets : null;
+      const savedSets = already && already.dayKey===dk ? (already.exercises.find(e=>e.exId===exo.id)||{}).sets : null;
       html += `<div class="ex" id="ex-${exo.id}">
         <div class="ex-head"><span class="ex-name">${i+1}. ${escHtml(exo.name)}</span><span class="ex-tag">${exo.sets}×${exo.repMin}-${exo.repMax}</span></div>
         <div class="ex-meta">Отдых ${escHtml(exo.rest)}</div>
@@ -231,15 +285,16 @@ function renderToday(){
       </div>`;
     });
     html += `</div>`;
-    html += `<button class="save-btn" onclick="saveSession('${dk}')">${already?'Обновить тренировку':'Сохранить тренировку'}</button>`;
+    html += `<div class="save-status" id="save-status">${already?'Сохранено автоматически ✓':'Ввод сохраняется автоматически'}</div>`;
+    html += `<button class="save-btn" onclick="saveSession()">${already?'Обновить тренировку':'Сохранить тренировку'}</button>`;
   }
   app.innerHTML = html;
 }
 
-function readinessRow(key,label,val){
+function readinessRow(key,label,val,handler){
   let dots='';
   for(let i=1;i<=5;i++){
-    dots+=`<button class="dot ${val===i?'on':''}" onclick="setReadiness('${key}',${i})">${i}</button>`;
+    dots+=`<button class="dot ${val===i?'on':''}" onclick="${handler}('${key}',${i})">${i}</button>`;
   }
   return `<div class="readiness-row"><label>${label}</label><div class="dots">${dots}</div></div>`;
 }
@@ -247,56 +302,112 @@ function setReadiness(key,val){
   const dstr = todayStr();
   const existing = state.sessions.find(s=>s.date===dstr);
   if(existing){ existing.readiness[key]=val; saveState(); }
-  else { readinessDraft[key]=val; }
+  else {
+    const cur = drafts.readiness && drafts.readiness.date===dstr ? drafts.readiness : {sleep:null, energy:null, soreness:null};
+    drafts.readiness = Object.assign({}, cur, {date:dstr, [key]:val});
+    saveDrafts();
+  }
   render();
 }
 
+function setRowHtml(cat, exId, i, aVal, bVal, ph, mode){
+  const at = `data-mode="${mode}" data-ex="${exId}" data-set="${i}"`;
+  aVal = escHtml(aVal); bVal = escHtml(bVal);
+  if(cat==='t'){
+    return `<div class="setrow"><span class="idx">${i+1}</span>
+      <input type="number" inputmode="numeric" placeholder="${ph}" value="${bVal}" ${at} data-f="b" style="max-width:120px">
+      <span class="u">сек</span></div>`;
+  }
+  const bMode = cat==='d' ? 'decimal' : 'numeric';
+  const bUnit = cat==='d' ? 'м' : 'повт';
+  return `<div class="setrow"><span class="idx">${i+1}</span>
+    <input type="number" inputmode="decimal" step="0.5" placeholder="вес" value="${aVal}" ${at} data-f="a">
+    <span class="u">кг</span>
+    <input type="number" inputmode="${bMode}" placeholder="${ph}" value="${bVal}" ${at} data-f="b">
+    <span class="u">${bUnit}</span></div>`;
+}
+
 function buildSetRows(exo, sug, savedSets){
+  const count = Math.max(exo.sets, savedSets ? savedSets.length : 0);
   let rows='';
-  for(let i=0;i<exo.sets;i++){
+  for(let i=0;i<count;i++){
     const saved = savedSets && savedSets[i] ? savedSets[i] : null;
     const aVal = saved ? saved.a : (exo.cat!=='t' && sug.weight!=null ? sug.weight : '');
     const bVal = saved ? saved.b : '';
-    if(exo.cat==='w'){
-      rows += `<div class="setrow"><span class="idx">${i+1}</span>
-        <input type="number" inputmode="decimal" step="0.5" placeholder="вес" value="${aVal}" data-ex="${exo.id}" data-set="${i}" data-f="a">
-        <span class="u">кг</span>
-        <input type="number" inputmode="numeric" placeholder="${sug.target}" value="${bVal}" data-ex="${exo.id}" data-set="${i}" data-f="b">
-        <span class="u">повт</span></div>`;
-    } else if(exo.cat==='t'){
-      rows += `<div class="setrow"><span class="idx">${i+1}</span>
-        <input type="number" inputmode="numeric" placeholder="${sug.target}" value="${bVal}" data-ex="${exo.id}" data-set="${i}" data-f="b" style="max-width:120px">
-        <span class="u">сек</span></div>`;
-    } else if(exo.cat==='d'){
-      rows += `<div class="setrow"><span class="idx">${i+1}</span>
-        <input type="number" inputmode="decimal" step="0.5" placeholder="вес" value="${aVal}" data-ex="${exo.id}" data-set="${i}" data-f="a">
-        <span class="u">кг</span>
-        <input type="number" inputmode="decimal" placeholder="${sug.target}" value="${bVal}" data-ex="${exo.id}" data-set="${i}" data-f="b">
-        <span class="u">м</span></div>`;
-    }
+    rows += setRowHtml(exo.cat, exo.id, i, aVal, bVal, sug.target, 'today');
   }
   return rows;
 }
 
-function saveSession(dk){
-  const dstr = todayStr();
-  const prog = state.program[dk];
-  const exercises = prog.exercises.map(exo=>{
+/* ---- автосохранение сегодняшней тренировки: пишем прямо в сессию, пока идёт ввод ---- */
+let autosaveTimer = null;
+function scheduleAutosave(){
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(autosaveToday, 500);
+  setSaveStatus('Сохраняю…');
+}
+function flushAutosave(){
+  if(autosaveTimer){ clearTimeout(autosaveTimer); autosaveToday(); }
+}
+function autosaveToday(){
+  autosaveTimer = null;
+  if(writeTodaySession(false)){
+    saveState();
+    setSaveStatus('Сохранено автоматически ✓');
+  }
+}
+function setSaveStatus(text){
+  const el = document.getElementById('save-status');
+  if(el) el.textContent = text;
+}
+
+function collectTodayExercises(dk){
+  return state.program[dk].exercises.map(exo=>{
     const sets=[];
-    for(let i=0;i<exo.sets;i++){
-      const aEl = document.querySelector(`input[data-ex="${exo.id}"][data-set="${i}"][data-f="a"]`);
-      const bEl = document.querySelector(`input[data-ex="${exo.id}"][data-set="${i}"][data-f="b"]`);
-      sets.push({a: aEl? aEl.value : '', b: bEl? bEl.value : ''});
-    }
+    document.querySelectorAll(`.ex[id="ex-${exo.id}"] .setrow`).forEach(row=>{
+      const aEl = row.querySelector('input[data-f="a"]');
+      const bEl = row.querySelector('input[data-f="b"]');
+      sets.push({a: aEl ? aEl.value : '', b: bEl ? bEl.value : ''});
+    });
     return {exId:exo.id, sets};
   });
+}
+
+function writeTodaySession(force){
+  const card = document.getElementById('today-card');
+  if(!card) return false;
+  const dk = card.dataset.dk;
+  if(!state.program[dk]) return false;
+  const dstr = todayStr();
+  const exercises = collectTodayExercises(dk);
   const existingIdx = state.sessions.findIndex(s=>s.date===dstr);
-  const readiness = existingIdx>=0 ? state.sessions[existingIdx].readiness : readinessDraft;
+  const existing = existingIdx>=0 ? state.sessions[existingIdx] : null;
+  if(!force && !existing && !exercises.some(e=>e.sets.some(s=>s.b!==''))) return false;
+  const dr = drafts.readiness && drafts.readiness.date===dstr ? drafts.readiness : {};
+  const readiness = existing ? existing.readiness : {sleep:dr.sleep??null, energy:dr.energy??null, soreness:dr.soreness??null};
   const session = {id: dstr+'-'+dk, date:dstr, dayKey:dk, readiness, exercises};
-  if(existingIdx>=0) state.sessions[existingIdx]=session; else state.sessions.push(session);
-  readinessDraft = {sleep:null,energy:null,soreness:null};
-  saveState();
+  if(existing) state.sessions[existingIdx] = session; else state.sessions.push(session);
+  if(drafts.readiness){ delete drafts.readiness; saveDrafts(); }
+  return true;
+}
+
+function saveSession(){
+  clearTimeout(autosaveTimer); autosaveTimer = null;
+  if(writeTodaySession(true)){
+    saveState();
+    showToast('Тренировка сохранена');
+  }
   render();
+}
+
+let toastTimer = null;
+function showToast(msg){
+  const el = document.getElementById('toast');
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>el.classList.remove('show'), 2200);
 }
 
 function markDeload(){
@@ -306,7 +417,18 @@ function markDeload(){
 }
 
 function setDayOverride(val){
+  flushAutosave();
   const dstr = todayStr();
+  const idx = state.sessions.findIndex(s=>s.date===dstr);
+  const existing = idx>=0 ? state.sessions[idx] : null;
+  if(existing && existing.dayKey!==val){
+    const hasData = existing.exercises.some(e=>e.sets.some(s=>s.b!==''));
+    if(hasData && !confirm(`Сегодня уже записана тренировка «${DAY_LABELS[existing.dayKey]||existing.dayKey}». Сменить день и удалить её?`)){
+      render();
+      return;
+    }
+    state.sessions.splice(idx,1);
+  }
   const scheduled = dayKeyFor(new Date());
   if(val === scheduled) delete state.dayOverride;
   else state.dayOverride = {date: dstr, dayKey: val};
@@ -385,17 +507,19 @@ function recordsCard(){
 function renderHistory(){
   let html = `<div class="topbar"><h1>История</h1><div class="daysub">${state.sessions.length} тренировок записано</div></div>`;
   html += recordsCard();
+  if(drafts.edit && !state.sessions.some(s=>s.id===drafts.edit.origId)){ delete drafts.edit; saveDrafts(); }
   if(!state.sessions.length){
     html += `<div class="empty">Пока пусто — заполни и сохрани сегодняшнюю тренировку на вкладке «Сегодня».</div>`;
   } else {
     const sorted = [...state.sessions].sort((a,b)=> a.date<b.date?1:-1);
     sorted.forEach(s=>{
+      if(drafts.edit && drafts.edit.origId===s.id){ html += renderEditCard(drafts.edit.session); return; }
       const prog = state.program[s.dayKey];
       const d = new Date(s.date+'T00:00:00');
       html += `<div class="card">
         <div class="hist-day"><div><div class="hist-date">${fmtDateBig(d)} · ${escHtml(prog?prog.title:s.dayKey)}</div>
         <div class="hist-sub">${WD_NAMES[weekday(d)]}</div></div>
-        <button class="hist-del" onclick="delSession('${s.id}')">удалить</button></div>`;
+        <div class="hist-actions"><button class="hist-del" onclick="startEdit('${s.id}')">изменить</button><button class="hist-del" onclick="delSession('${s.id}')">удалить</button></div></div>`;
       s.exercises.forEach(e=>{
         const exo = prog ? prog.exercises.find(x=>x.id===e.exId) : null;
         if(!exo) return;
@@ -411,7 +535,157 @@ function renderHistory(){
 function delSession(id){
   if(!confirm('Удалить эту тренировку из истории?')) return;
   state.sessions = state.sessions.filter(s=>s.id!==id);
+  if(drafts.edit && drafts.edit.origId===id){ delete drafts.edit; saveDrafts(); }
   saveState(); render();
+}
+
+/* ---- редактирование сохранённой тренировки (рабочая копия живёт в drafts.edit) ---- */
+function startEdit(id){
+  const s = state.sessions.find(x=>x.id===id);
+  if(!s) return;
+  const copy = JSON.parse(JSON.stringify(s));
+  copy.readiness = Object.assign({sleep:null, energy:null, soreness:null}, copy.readiness);
+  drafts.edit = {origId:id, session:copy};
+  saveDrafts();
+  render();
+}
+function cancelEdit(){
+  delete drafts.edit;
+  saveDrafts();
+  render();
+}
+
+function editExerciseList(sess){
+  const prog = state.program[sess.dayKey];
+  const list = prog ? prog.exercises.map(e=>({id:e.id, name:e.name, cat:e.cat, sets:e.sets, target:e.repMin})) : [];
+  const known = new Set(list.map(e=>e.id));
+  sess.exercises.forEach(e=>{
+    if(!known.has(e.exId)) list.push({id:e.exId, name:'Упражнение вне программы ('+e.exId+')', cat:'w', sets:e.sets.length, target:''});
+  });
+  return list;
+}
+function editEntry(sess, exId){
+  let e = sess.exercises.find(x=>x.exId===exId);
+  if(!e){ e = {exId, sets:[]}; sess.exercises.push(e); }
+  return e;
+}
+function editSetCount(sess, exo){
+  const e = sess.exercises.find(x=>x.exId===exo.id);
+  return e && e.sets.length ? e.sets.length : exo.sets;
+}
+function editFillSets(sess, exo){
+  const e = editEntry(sess, exo.id);
+  const n = editSetCount(sess, exo);
+  while(e.sets.length<n) e.sets.push({a:'', b:''});
+  return e;
+}
+
+function renderEditCard(sess){
+  const list = editExerciseList(sess);
+  const dayOpts = ['A','B','C'].map(v=>`<option value="${v}" ${sess.dayKey===v?'selected':''}>${escHtml(state.program[v].title)}</option>`).join('');
+  let html = `<div class="card edit-card"><h3>Редактирование тренировки</h3>
+    <div class="field"><label>Дата</label><input type="date" value="${escHtml(sess.date)}" onchange="editChangeDate(this.value)"></div>
+    <div class="field"><label>День программы</label><select onchange="editChangeDay(this.value)">${dayOpts}</select></div>
+    ${readinessRow('sleep','Сон', sess.readiness.sleep, 'editSetReadiness')}
+    ${readinessRow('energy','Энергия', sess.readiness.energy, 'editSetReadiness')}
+    ${readinessRow('soreness','Свежесть мышц', sess.readiness.soreness, 'editSetReadiness')}`;
+  list.forEach((exo,i)=>{
+    const e = sess.exercises.find(x=>x.exId===exo.id);
+    const n = editSetCount(sess, exo);
+    let rows = '';
+    for(let k=0;k<n;k++){
+      const st = e && e.sets[k] ? e.sets[k] : {a:'', b:''};
+      rows += setRowHtml(exo.cat, exo.id, k, st.a, st.b, exo.target, 'edit');
+    }
+    html += `<div class="ex"><div class="ex-head"><span class="ex-name">${i+1}. ${escHtml(exo.name)}</span></div>
+      <div class="sets">${rows}</div>
+      <div class="btnline"><button class="btn" onclick="editAddSet('${exo.id}')">+ подход</button><button class="btn" onclick="editRemoveSet('${exo.id}')">− подход</button></div></div>`;
+  });
+  html += `<div class="btnline"><button class="btn" onclick="cancelEdit()">Отмена</button><button class="btn primary" onclick="saveEdit()">Сохранить изменения</button></div></div>`;
+  return html;
+}
+
+function updateEditFromInput(t){
+  if(!drafts.edit) return;
+  const sess = drafts.edit.session;
+  const e = editEntry(sess, t.dataset.ex);
+  const i = Number(t.dataset.set);
+  while(e.sets.length<=i) e.sets.push({a:'', b:''});
+  e.sets[i][t.dataset.f] = t.value;
+  saveDrafts();
+}
+function editSetReadiness(key, val){
+  drafts.edit.session.readiness[key] = val;
+  saveDrafts();
+  render();
+}
+function editChangeDate(val){
+  const sess = drafts.edit.session;
+  if(val){
+    const clash = state.sessions.find(s=>s.date===val && s.id!==drafts.edit.origId);
+    if(clash) alert('На эту дату уже есть другая тренировка. Удали её или выбери другую дату.');
+    else sess.date = val;
+  }
+  saveDrafts();
+  render();
+}
+function editChangeDay(val){
+  const sess = drafts.edit.session;
+  if(val===sess.dayKey) return;
+  const ids = new Set(state.program[val].exercises.map(e=>e.id));
+  const hasData = e => e.sets.some(s=>s.a!=='' || s.b!=='');
+  const lost = sess.exercises.filter(e=>!ids.has(e.exId) && hasData(e));
+  if(lost.length && !confirm('У выбранного дня другой набор упражнений — данные по '+lost.length+' упр. будут удалены. Продолжить?')){
+    render();
+    return;
+  }
+  sess.exercises = sess.exercises.filter(e=>ids.has(e.exId));
+  sess.dayKey = val;
+  saveDrafts();
+  render();
+}
+function editAddSet(exId){
+  const sess = drafts.edit.session;
+  const exo = editExerciseList(sess).find(x=>x.id===exId);
+  const e = editFillSets(sess, exo);
+  e.sets.push({a:'', b:''});
+  saveDrafts();
+  render();
+}
+function editRemoveSet(exId){
+  const sess = drafts.edit.session;
+  const exo = editExerciseList(sess).find(x=>x.id===exId);
+  const e = editFillSets(sess, exo);
+  if(e.sets.length>1) e.sets.pop();
+  saveDrafts();
+  render();
+}
+
+function saveEdit(){
+  const ed = drafts.edit;
+  if(!ed) return;
+  const sess = ed.session;
+  if(!sess.date){ alert('Укажи дату.'); return; }
+  if(state.sessions.some(s=>s.date===sess.date && s.id!==ed.origId)){
+    alert('На эту дату уже есть другая тренировка. Удали её или выбери другую дату.');
+    return;
+  }
+  const exercises = [];
+  editExerciseList(sess).forEach(exo=>{
+    const e = sess.exercises.find(x=>x.exId===exo.id);
+    if(!e) return;
+    const sets = e.sets.map(s=>({a:s.a, b:s.b}));
+    while(sets.length && sets[sets.length-1].a==='' && sets[sets.length-1].b==='') sets.pop();
+    if(sets.length) exercises.push({exId:exo.id, sets});
+  });
+  const saved = {id: sess.date+'-'+sess.dayKey, date:sess.date, dayKey:sess.dayKey, readiness:sess.readiness, exercises};
+  const idx = state.sessions.findIndex(s=>s.id===ed.origId);
+  if(idx>=0) state.sessions[idx] = saved; else state.sessions.push(saved);
+  delete drafts.edit;
+  saveDrafts();
+  saveState();
+  showToast('Изменения сохранены');
+  render();
 }
 
 /* ================= BODY: КБЖУ / вода / FFMI ================= */
@@ -452,9 +726,9 @@ function bodyCompositionCard(){
   } else {
     html += `<p class="hint">Пока нет ни одного замера — добавь первый, чтобы считать FFMI и цель по воде.</p>`;
   }
-  html += `<div class="field"><label>Вес (кг)</label><input type="number" inputmode="decimal" step="0.1" id="bf-weight" value="${latest?latest.weightKg:''}"></div>
-    <div class="field"><label>Рост (см)</label><input type="number" inputmode="decimal" step="0.5" id="bf-height" value="${latest?latest.heightCm:''}"></div>
-    <div class="field"><label>% жира</label><input type="number" inputmode="decimal" step="0.1" id="bf-fat" value="${latest?latest.bodyFatPct:''}"></div>
+  html += `<div class="field"><label>Вес (кг)</label><input type="number" inputmode="decimal" step="0.1" id="bf-weight" data-draft="bf-weight" value="${escHtml(formVal('bf-weight', latest?latest.weightKg:''))}"></div>
+    <div class="field"><label>Рост (см)</label><input type="number" inputmode="decimal" step="0.5" id="bf-height" data-draft="bf-height" value="${escHtml(formVal('bf-height', latest?latest.heightCm:''))}"></div>
+    <div class="field"><label>% жира</label><input type="number" inputmode="decimal" step="0.1" id="bf-fat" data-draft="bf-fat" value="${escHtml(formVal('bf-fat', latest?latest.bodyFatPct:''))}"></div>
     <div class="btnline"><button class="btn" onclick="addBodyEntry()">Сохранить замер на сегодня</button></div>`;
   if(state.body.log.length){
     html += `<div class="pexlist">`;
@@ -478,6 +752,7 @@ function addBodyEntry(){
   const idx = state.body.log.findIndex(e=>e.date===dstr);
   const entry = {date:dstr, weightKg:w, heightCm:h, bodyFatPct:bf, ffmi};
   if(idx>=0) state.body.log[idx] = entry; else state.body.log.push(entry);
+  clearFormVals('bf-');
   saveState();
   render();
 }
@@ -530,11 +805,11 @@ function nutritionCard(dstr){
   }
 
   html += `<div class="pex-fields food-add">
-    <label>Название<input type="text" id="food-name" placeholder="Например, овсянка"></label>
-    <label>Ккал<input type="number" inputmode="numeric" id="food-kcal"></label>
-    <label>Белки, г<input type="number" inputmode="decimal" id="food-protein"></label>
-    <label>Жиры, г<input type="number" inputmode="decimal" id="food-fat"></label>
-    <label>Углеводы, г<input type="number" inputmode="decimal" id="food-carb"></label>
+    <label>Название<input type="text" id="food-name" data-draft="food-name" value="${escHtml(formVal('food-name',''))}" placeholder="Например, овсянка"></label>
+    <label>Ккал<input type="number" inputmode="numeric" id="food-kcal" data-draft="food-kcal" value="${escHtml(formVal('food-kcal',''))}"></label>
+    <label>Белки, г<input type="number" inputmode="decimal" id="food-protein" data-draft="food-protein" value="${escHtml(formVal('food-protein',''))}"></label>
+    <label>Жиры, г<input type="number" inputmode="decimal" id="food-fat" data-draft="food-fat" value="${escHtml(formVal('food-fat',''))}"></label>
+    <label>Углеводы, г<input type="number" inputmode="decimal" id="food-carb" data-draft="food-carb" value="${escHtml(formVal('food-carb',''))}"></label>
   </div>
   <button class="btn add-ex-btn" onclick="addFoodEntry()">+ Добавить приём пищи</button>`;
 
@@ -557,6 +832,7 @@ function addFoodEntry(){
   if(!name){ alert('Укажи название приёма пищи.'); return; }
   const dstr = todayStr();
   ensureNutritionDay(dstr).entries.push({id:'f'+Date.now(), name, kcal, protein, fat, carb});
+  clearFormVals('food-');
   saveState();
   render();
 }
@@ -625,8 +901,10 @@ function renderSettings(){
     </select></div>
   </div>`;
 
+  html += syncCard();
+
   html += `<div class="card"><h3>Данные</h3>
-    <p class="hint">Всё хранится локально в этом браузере на этом устройстве. Экспортируй бэкап в JSON, чтобы перенести историю и программу на другое устройство или сохранить на всякий случай.</p>
+    <p class="hint">Данные всегда хранятся локально в этом браузере (автосохранение при вводе). Если подключена синхронизация — дополнительно копируются на сервер. Бэкап в JSON — на всякий случай или для переноса вручную.</p>
     <div class="btnline">
       <button class="btn" onclick="exportData()">Экспортировать JSON</button>
       <button class="btn" onclick="triggerImport()">Импортировать JSON</button>
@@ -636,6 +914,35 @@ function renderSettings(){
   </div>`;
 
   app.innerHTML = html;
+}
+
+/* ---- sync UI (логика в sync.js) ---- */
+function syncCard(){
+  let html = `<div class="card"><h3>Синхронизация</h3>
+    <p class="hint">Общая база для всех твоих устройств: изменения автоматически уходят на сервер и подтягиваются на других устройствах. Нужен ключ — то же значение, что записано в переменной SYNC_TOKEN на сервере.</p>
+    <div class="metric-row"><span>Статус</span><b id="sync-status" class="sync-status">${escHtml(Sync.statusText())}</b></div>`;
+  if(Sync.enabled()){
+    html += `<div class="btnline"><button class="btn" onclick="Sync.syncNow(true)">Синхронизировать сейчас</button><button class="btn danger" onclick="disconnectSync()">Отключить</button></div>`;
+  } else {
+    html += `<div class="field"><label>Ключ синхронизации</label><input type="password" id="sync-token" autocomplete="off" placeholder="SYNC_TOKEN"></div>
+      <div class="btnline"><button class="btn" onclick="connectSync()">Подключить</button></div>`;
+  }
+  if(Sync.hasBackup()){
+    html += `<p class="hint">При последнем конфликте одна из версий данных была заменена — её копия сохранена.</p>
+      <div class="btnline"><button class="btn" onclick="Sync.downloadBackup()">Скачать вытесненную копию</button></div>`;
+  }
+  return html + `</div>`;
+}
+async function connectSync(){
+  const v = document.getElementById('sync-token').value.trim();
+  if(!v){ alert('Введи ключ синхронизации.'); return; }
+  await Sync.connect(v);
+  render();
+}
+function disconnectSync(){
+  if(!confirm('Отключить синхронизацию на этом устройстве? Данные на устройстве и на сервере останутся как есть.')) return;
+  Sync.disconnect();
+  render();
 }
 
 /* ---- program editor ---- */
@@ -749,27 +1056,33 @@ function resetProgram(){
 /* ---- settings: misc ---- */
 function setDeloadWeeks(v){ state.deloadWeeks = Number(v)||7; saveState(); }
 function setSchedule(wd,val){ state.scheduleMap[wd]=val; saveState(); }
+function applyTheme(){
+  if(state.theme && state.theme!=='auto') document.documentElement.setAttribute('data-theme', state.theme);
+  else document.documentElement.removeAttribute('data-theme');
+}
 function setTheme(v){
   state.theme = v;
-  if(v==='auto') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', v);
+  applyTheme();
   saveState();
 }
 function resetAll(){
-  if(!confirm('Удалить всю историю тренировок и настройки? Это необратимо.')) return;
+  const extra = Sync.enabled() ? ' Синхронизация включена — данные на сервере тоже будут очищены.' : '';
+  if(!confirm('Удалить всю историю тренировок и настройки? Это необратимо.'+extra)) return;
   state = defaultState();
+  drafts = {};
+  saveDrafts();
   saveState();
-  document.documentElement.removeAttribute('data-theme');
+  applyTheme();
   render();
 }
 
 /* ---- data export / import ---- */
-function exportData(){
-  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+function exportData(data, filename){
+  const blob = new Blob([JSON.stringify(data || state, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `trener-backup-${todayStr()}.json`;
+  a.download = filename || `trener-backup-${todayStr()}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -792,10 +1105,11 @@ function importData(input){
         return;
       }
       if(!confirm('Импорт заменит текущие данные (историю, программу, настройки) содержимым файла. Продолжить?')) return;
-      state = Object.assign(defaultState(), parsed);
+      state = normalizeState(parsed);
+      delete drafts.edit;
+      saveDrafts();
       saveState();
-      if(state.theme && state.theme!=='auto') document.documentElement.setAttribute('data-theme', state.theme);
-      else document.documentElement.removeAttribute('data-theme');
+      applyTheme();
       render();
     }catch(e){
       alert('Не удалось прочитать файл: похоже, это не валидный JSON.');
@@ -809,8 +1123,21 @@ function importData(input){
 document.getElementById('nav').addEventListener('click', e=>{
   const b = e.target.closest('button[data-tab]');
   if(!b) return;
-  activeTab = b.dataset.tab;
-  render();
+  setTab(b.dataset.tab);
 });
-if(state.theme && state.theme!=='auto') document.documentElement.setAttribute('data-theme', state.theme);
+app.addEventListener('input', e=>{
+  const t = e.target;
+  if(!(t instanceof HTMLInputElement)) return;
+  if(t.dataset.mode==='today') scheduleAutosave();
+  else if(t.dataset.mode==='edit') updateEditFromInput(t);
+  else if(t.dataset.draft) setFormVal(t.dataset.draft, t.value);
+});
+window.addEventListener('pagehide', flushAutosave);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') flushAutosave(); });
+Sync.onStatus = ()=>{
+  const el = document.getElementById('sync-status');
+  if(el) el.textContent = Sync.statusText();
+};
+applyTheme();
 render();
+Sync.init();

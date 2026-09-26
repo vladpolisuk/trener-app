@@ -89,7 +89,7 @@ h1,h2,h3{font-family:'Playfair Display',Georgia,serif;font-weight:700;margin:0;}
 /* settings */
 .field{margin-top:12px;}
 .field label{font-size:13px;color:var(--ink-dim);display:block;margin-bottom:5px;}
-select,input[type=number],input[type=date],input[type=text]{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);
+select,input[type=number],input[type=date],input[type=text],input[type=password]{width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);
   background:var(--surface-2);color:var(--ink);font-size:15px;font-family:'Onest';}
 .sched-grid{display:grid;grid-template-columns:34px 1fr;gap:8px;align-items:center;margin-top:8px;}
 .sched-grid span{font-size:13px;color:var(--ink-dim);}
@@ -145,3 +145,14 @@ select,input[type=number],input[type=date],input[type=text]{width:100%;padding:9
 .empty{text-align:center;color:var(--ink-dim);font-size:14px;padding:30px 10px;}
 .trend{font-size:12px;color:var(--ink-dim);margin-left:6px;}
 .trend.up{color:var(--ok);}
+
+/* autosave / edit / sync */
+.save-status{margin:10px 16px 0;font-size:12.5px;color:var(--ink-dim);text-align:center;}
+.hist-actions{display:flex;gap:12px;}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink);}
+.edit-card .btnline{margin-top:10px;}
+.edit-card .ex .btn{padding:8px;font-size:13px;}
+.sync-status{font-size:13px;text-align:right;max-width:65%;}
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);background:var(--ink);color:var(--bg);
+  padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:20;}
+.toast.show{opacity:1;transform:translate(-50%,0);}
